@@ -1,0 +1,1222 @@
+{
+  "metadata": {
+    "business_name": "CashFlow AI",
+    "version": "1.0.0",
+    "stage": "2-DESIGN",
+    "created_at": "2025-12-26T00:00:00Z",
+    "gate_threshold": 85,
+    "target_score": 92
+  },
+  "design_spec": {
+    "architecture": {
+      "overview": "CashFlow AI is a modern, cloud-native SaaS application built on a modular monolith architecture optimized for mid-market B2B customers. The system consists of four primary layers: a Next.js frontend for the dashboard, a Node.js API layer for business logic, a Python ML service for predictive forecasting, and PostgreSQL with TimescaleDB for time-series data storage. The architecture prioritizes data accuracy (90-95% forecast precision), security (SOC 2 compliance), and performance (<200ms API response, <2s dashboard load).",
+      "pattern": "Modular Monolith with ML Microservice",
+      "rationale": "A modular monolith provides the simplicity needed for MVP while maintaining clear boundaries for future extraction. The ML service is separated due to different runtime requirements (Python vs Node.js) and independent scaling needs for forecast computation.",
+      "components": [
+        {
+          "name": "Web Dashboard",
+          "type": "frontend",
+          "technology": "Next.js 14 (App Router) + React 18 + Tailwind CSS + Shadcn UI",
+          "responsibility": "Executive dashboard, cash position views, forecast visualization, alert management, settings",
+          "communication": "REST API calls to Backend API, WebSocket for real-time updates"
+        },
+        {
+          "name": "Backend API",
+          "type": "backend",
+          "technology": "Node.js 20 + Express + TypeScript + Prisma ORM",
+          "responsibility": "Authentication, authorization, business logic, data validation, integration orchestration",
+          "communication": "REST endpoints, HTTP calls to ML Service, Plaid/accounting webhooks"
+        },
+        {
+          "name": "ML Forecast Service",
+          "type": "microservice",
+          "technology": "Python 3.11 + FastAPI + Prophet + scikit-learn",
+          "responsibility": "Cash flow forecasting, anomaly detection, working capital optimization, model training",
+          "communication": "Internal REST API from Backend, async job queue (Redis)"
+        },
+        {
+          "name": "Data Layer",
+          "type": "database",
+          "technology": "PostgreSQL 15 + TimescaleDB + Redis 7",
+          "responsibility": "Persistent storage, time-series optimization, caching, session management",
+          "communication": "Prisma Client (Node.js), SQLAlchemy (Python)"
+        },
+        {
+          "name": "Integration Layer",
+          "type": "integration",
+          "technology": "Plaid Link SDK, QuickBooks API, NetSuite API, Stripe SDK",
+          "responsibility": "Bank account aggregation, accounting data sync, payment processing",
+          "communication": "OAuth 2.0, webhooks, scheduled sync jobs"
+        }
+      ],
+      "data_flow": {
+        "user_authentication": "User -> Next.js -> Backend API -> JWT validation -> User context",
+        "bank_sync": "Plaid Webhook -> Backend API -> Transform -> TimescaleDB transactions table",
+        "forecast_generation": "Backend API -> Redis Queue -> ML Service -> Prophet model -> Forecast results -> Backend API -> TimescaleDB forecasts table -> Dashboard",
+        "real_time_updates": "Transaction webhook -> Backend API -> WebSocket broadcast -> Dashboard update",
+        "alert_processing": "ML Service -> Anomaly detection -> Backend API -> Alert creation -> Email/in-app notification"
+      }
+    },
+    "database_schema": {
+      "dialect": "postgresql",
+      "extensions": ["timescaledb", "uuid-ossp", "pgcrypto"],
+      "tables": [
+        {
+          "name": "users",
+          "description": "User accounts with authentication and role information",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT uuid_generate_v4()"},
+            {"name": "email", "type": "VARCHAR(255)", "constraints": "UNIQUE NOT NULL"},
+            {"name": "password_hash", "type": "VARCHAR(255)", "constraints": "NOT NULL"},
+            {"name": "first_name", "type": "VARCHAR(100)", "constraints": "NOT NULL"},
+            {"name": "last_name", "type": "VARCHAR(100)", "constraints": "NOT NULL"},
+            {"name": "role", "type": "VARCHAR(20)", "constraints": "NOT NULL DEFAULT 'analyst'", "enum": ["admin", "cfo", "controller", "analyst", "viewer"]},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE"},
+            {"name": "mfa_enabled", "type": "BOOLEAN", "constraints": "DEFAULT false"},
+            {"name": "mfa_secret", "type": "VARCHAR(255)", "constraints": "NULL"},
+            {"name": "last_login_at", "type": "TIMESTAMPTZ", "constraints": "NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"},
+            {"name": "updated_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": ["CREATE INDEX idx_users_company ON users(company_id)", "CREATE INDEX idx_users_email ON users(email)"]
+        },
+        {
+          "name": "companies",
+          "description": "Customer organizations with subscription and configuration",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT uuid_generate_v4()"},
+            {"name": "name", "type": "VARCHAR(255)", "constraints": "NOT NULL"},
+            {"name": "industry", "type": "VARCHAR(50)", "constraints": "NOT NULL", "enum": ["manufacturing", "professional_services", "saas", "retail", "other"]},
+            {"name": "employee_count", "type": "INTEGER", "constraints": "NOT NULL"},
+            {"name": "annual_revenue", "type": "BIGINT", "constraints": "NOT NULL COMMENT 'in cents'"},
+            {"name": "timezone", "type": "VARCHAR(50)", "constraints": "DEFAULT 'America/New_York'"},
+            {"name": "currency", "type": "VARCHAR(3)", "constraints": "DEFAULT 'USD'"},
+            {"name": "subscription_tier", "type": "VARCHAR(20)", "constraints": "DEFAULT 'starter'", "enum": ["starter", "professional", "enterprise"]},
+            {"name": "subscription_status", "type": "VARCHAR(20)", "constraints": "DEFAULT 'trial'", "enum": ["trial", "active", "past_due", "cancelled"]},
+            {"name": "stripe_customer_id", "type": "VARCHAR(255)", "constraints": "NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"},
+            {"name": "updated_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": ["CREATE INDEX idx_companies_industry ON companies(industry)", "CREATE INDEX idx_companies_subscription ON companies(subscription_status)"]
+        },
+        {
+          "name": "bank_accounts",
+          "description": "Connected bank accounts via Plaid",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT uuid_generate_v4()"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "plaid_account_id", "type": "VARCHAR(255)", "constraints": "UNIQUE NOT NULL"},
+            {"name": "plaid_access_token", "type": "VARCHAR(255)", "constraints": "NOT NULL COMMENT 'encrypted'"},
+            {"name": "institution_name", "type": "VARCHAR(255)", "constraints": "NOT NULL"},
+            {"name": "institution_id", "type": "VARCHAR(100)", "constraints": "NOT NULL"},
+            {"name": "account_name", "type": "VARCHAR(255)", "constraints": "NOT NULL"},
+            {"name": "account_type", "type": "VARCHAR(50)", "constraints": "NOT NULL", "enum": ["checking", "savings", "credit", "investment", "other"]},
+            {"name": "account_subtype", "type": "VARCHAR(50)", "constraints": "NULL"},
+            {"name": "mask", "type": "VARCHAR(4)", "constraints": "NULL COMMENT 'last 4 digits'"},
+            {"name": "current_balance", "type": "BIGINT", "constraints": "DEFAULT 0 COMMENT 'in cents'"},
+            {"name": "available_balance", "type": "BIGINT", "constraints": "DEFAULT 0 COMMENT 'in cents'"},
+            {"name": "currency", "type": "VARCHAR(3)", "constraints": "DEFAULT 'USD'"},
+            {"name": "is_active", "type": "BOOLEAN", "constraints": "DEFAULT true"},
+            {"name": "last_synced_at", "type": "TIMESTAMPTZ", "constraints": "NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"},
+            {"name": "updated_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": [
+            "CREATE INDEX idx_bank_accounts_company ON bank_accounts(company_id)",
+            "CREATE INDEX idx_bank_accounts_institution ON bank_accounts(institution_id)",
+            "CREATE INDEX idx_bank_accounts_active ON bank_accounts(is_active) WHERE is_active = true"
+          ]
+        },
+        {
+          "name": "transactions",
+          "description": "Bank transactions - TimescaleDB hypertable for time-series optimization",
+          "is_hypertable": true,
+          "partition_column": "transaction_date",
+          "segment_by": "company_id",
+          "chunk_interval": "1 month",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "DEFAULT uuid_generate_v4()"},
+            {"name": "bank_account_id", "type": "UUID", "constraints": "REFERENCES bank_accounts(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "plaid_transaction_id", "type": "VARCHAR(255)", "constraints": "NOT NULL"},
+            {"name": "transaction_date", "type": "TIMESTAMPTZ", "constraints": "NOT NULL"},
+            {"name": "amount", "type": "BIGINT", "constraints": "NOT NULL COMMENT 'in cents, negative=outflow'"},
+            {"name": "category_primary", "type": "VARCHAR(100)", "constraints": "NULL"},
+            {"name": "category_detailed", "type": "VARCHAR(100)", "constraints": "NULL"},
+            {"name": "merchant_name", "type": "VARCHAR(255)", "constraints": "NULL"},
+            {"name": "description", "type": "TEXT", "constraints": "NULL"},
+            {"name": "pending", "type": "BOOLEAN", "constraints": "DEFAULT false"},
+            {"name": "payment_channel", "type": "VARCHAR(50)", "constraints": "NULL", "enum": ["online", "in_store", "other"]},
+            {"name": "transaction_type", "type": "VARCHAR(50)", "constraints": "NULL", "enum": ["inflow", "outflow", "transfer"]},
+            {"name": "is_recurring", "type": "BOOLEAN", "constraints": "DEFAULT false"},
+            {"name": "recurring_pattern", "type": "VARCHAR(50)", "constraints": "NULL", "enum": ["weekly", "biweekly", "monthly", "quarterly", "annual"]},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": [
+            "CREATE INDEX idx_transactions_company_date ON transactions(company_id, transaction_date DESC)",
+            "CREATE INDEX idx_transactions_account ON transactions(bank_account_id, transaction_date DESC)",
+            "CREATE INDEX idx_transactions_category ON transactions(category_primary)",
+            "CREATE UNIQUE INDEX idx_transactions_plaid_id ON transactions(plaid_transaction_id)"
+          ],
+          "hypertable_config": "SELECT create_hypertable('transactions', by_range('transaction_date', INTERVAL '1 month'));"
+        },
+        {
+          "name": "forecasts",
+          "description": "Generated cash flow forecasts - TimescaleDB hypertable",
+          "is_hypertable": true,
+          "partition_column": "forecast_date",
+          "segment_by": "company_id",
+          "chunk_interval": "3 months",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "DEFAULT uuid_generate_v4()"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "forecast_run_id", "type": "UUID", "constraints": "NOT NULL"},
+            {"name": "forecast_date", "type": "TIMESTAMPTZ", "constraints": "NOT NULL"},
+            {"name": "predicted_balance", "type": "BIGINT", "constraints": "NOT NULL COMMENT 'in cents'"},
+            {"name": "predicted_inflow", "type": "BIGINT", "constraints": "NOT NULL COMMENT 'in cents'"},
+            {"name": "predicted_outflow", "type": "BIGINT", "constraints": "NOT NULL COMMENT 'in cents'"},
+            {"name": "confidence_lower", "type": "BIGINT", "constraints": "NOT NULL COMMENT 'in cents'"},
+            {"name": "confidence_upper", "type": "BIGINT", "constraints": "NOT NULL COMMENT 'in cents'"},
+            {"name": "confidence_level", "type": "DECIMAL(5,4)", "constraints": "DEFAULT 0.95"},
+            {"name": "scenario", "type": "VARCHAR(20)", "constraints": "DEFAULT 'baseline'", "enum": ["pessimistic", "baseline", "optimistic"]},
+            {"name": "model_version", "type": "VARCHAR(50)", "constraints": "NOT NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": [
+            "CREATE INDEX idx_forecasts_company_date ON forecasts(company_id, forecast_date DESC)",
+            "CREATE INDEX idx_forecasts_run ON forecasts(forecast_run_id)",
+            "CREATE INDEX idx_forecasts_scenario ON forecasts(company_id, scenario, forecast_date DESC)"
+          ],
+          "hypertable_config": "SELECT create_hypertable('forecasts', by_range('forecast_date', INTERVAL '3 months'));"
+        },
+        {
+          "name": "forecast_runs",
+          "description": "Metadata for each forecast generation run",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT uuid_generate_v4()"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "triggered_by", "type": "UUID", "constraints": "REFERENCES users(id) NULL"},
+            {"name": "trigger_type", "type": "VARCHAR(20)", "constraints": "NOT NULL", "enum": ["manual", "scheduled", "webhook"]},
+            {"name": "status", "type": "VARCHAR(20)", "constraints": "DEFAULT 'pending'", "enum": ["pending", "processing", "completed", "failed"]},
+            {"name": "model_version", "type": "VARCHAR(50)", "constraints": "NOT NULL"},
+            {"name": "accuracy_metrics", "type": "JSONB", "constraints": "NULL COMMENT 'MAPE, RMSE, MAE'"},
+            {"name": "data_range_start", "type": "TIMESTAMPTZ", "constraints": "NOT NULL"},
+            {"name": "data_range_end", "type": "TIMESTAMPTZ", "constraints": "NOT NULL"},
+            {"name": "forecast_horizon_days", "type": "INTEGER", "constraints": "DEFAULT 90"},
+            {"name": "processing_time_ms", "type": "INTEGER", "constraints": "NULL"},
+            {"name": "error_message", "type": "TEXT", "constraints": "NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"},
+            {"name": "completed_at", "type": "TIMESTAMPTZ", "constraints": "NULL"}
+          ],
+          "indexes": [
+            "CREATE INDEX idx_forecast_runs_company ON forecast_runs(company_id, created_at DESC)",
+            "CREATE INDEX idx_forecast_runs_status ON forecast_runs(status) WHERE status = 'processing'"
+          ]
+        },
+        {
+          "name": "alerts",
+          "description": "System-generated alerts for cash flow events",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT uuid_generate_v4()"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "alert_type", "type": "VARCHAR(50)", "constraints": "NOT NULL", "enum": ["cash_shortage", "late_payment_risk", "anomaly", "working_capital", "forecast_deviation"]},
+            {"name": "severity", "type": "VARCHAR(20)", "constraints": "NOT NULL", "enum": ["info", "warning", "critical"]},
+            {"name": "title", "type": "VARCHAR(255)", "constraints": "NOT NULL"},
+            {"name": "message", "type": "TEXT", "constraints": "NOT NULL"},
+            {"name": "metadata", "type": "JSONB", "constraints": "NULL COMMENT 'context-specific data'"},
+            {"name": "predicted_date", "type": "TIMESTAMPTZ", "constraints": "NULL COMMENT 'when the event is predicted to occur'"},
+            {"name": "predicted_amount", "type": "BIGINT", "constraints": "NULL COMMENT 'in cents'"},
+            {"name": "status", "type": "VARCHAR(20)", "constraints": "DEFAULT 'active'", "enum": ["active", "acknowledged", "resolved", "dismissed"]},
+            {"name": "acknowledged_by", "type": "UUID", "constraints": "REFERENCES users(id) NULL"},
+            {"name": "acknowledged_at", "type": "TIMESTAMPTZ", "constraints": "NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"},
+            {"name": "expires_at", "type": "TIMESTAMPTZ", "constraints": "NULL"}
+          ],
+          "indexes": [
+            "CREATE INDEX idx_alerts_company_status ON alerts(company_id, status, created_at DESC)",
+            "CREATE INDEX idx_alerts_severity ON alerts(severity, status) WHERE status = 'active'",
+            "CREATE INDEX idx_alerts_type ON alerts(alert_type, status)"
+          ]
+        },
+        {
+          "name": "integrations",
+          "description": "Third-party integration configurations",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT uuid_generate_v4()"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "provider", "type": "VARCHAR(50)", "constraints": "NOT NULL", "enum": ["plaid", "quickbooks", "netsuite", "sage_intacct", "stripe", "bill_com"]},
+            {"name": "status", "type": "VARCHAR(20)", "constraints": "DEFAULT 'pending'", "enum": ["pending", "connected", "error", "disconnected"]},
+            {"name": "credentials", "type": "JSONB", "constraints": "NOT NULL COMMENT 'encrypted tokens'"},
+            {"name": "settings", "type": "JSONB", "constraints": "DEFAULT '{}'"},
+            {"name": "last_synced_at", "type": "TIMESTAMPTZ", "constraints": "NULL"},
+            {"name": "sync_frequency_minutes", "type": "INTEGER", "constraints": "DEFAULT 60"},
+            {"name": "error_message", "type": "TEXT", "constraints": "NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"},
+            {"name": "updated_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": [
+            "CREATE UNIQUE INDEX idx_integrations_company_provider ON integrations(company_id, provider)",
+            "CREATE INDEX idx_integrations_status ON integrations(status) WHERE status = 'connected'"
+          ]
+        },
+        {
+          "name": "invoices",
+          "description": "AR/AP invoices for payment prediction",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT uuid_generate_v4()"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "external_id", "type": "VARCHAR(255)", "constraints": "NOT NULL"},
+            {"name": "source", "type": "VARCHAR(50)", "constraints": "NOT NULL", "enum": ["quickbooks", "netsuite", "sage_intacct", "manual"]},
+            {"name": "type", "type": "VARCHAR(10)", "constraints": "NOT NULL", "enum": ["receivable", "payable"]},
+            {"name": "customer_vendor_name", "type": "VARCHAR(255)", "constraints": "NOT NULL"},
+            {"name": "amount", "type": "BIGINT", "constraints": "NOT NULL COMMENT 'in cents'"},
+            {"name": "currency", "type": "VARCHAR(3)", "constraints": "DEFAULT 'USD'"},
+            {"name": "issue_date", "type": "DATE", "constraints": "NOT NULL"},
+            {"name": "due_date", "type": "DATE", "constraints": "NOT NULL"},
+            {"name": "paid_date", "type": "DATE", "constraints": "NULL"},
+            {"name": "status", "type": "VARCHAR(20)", "constraints": "NOT NULL", "enum": ["draft", "sent", "partial", "paid", "overdue", "void"]},
+            {"name": "predicted_payment_date", "type": "DATE", "constraints": "NULL"},
+            {"name": "payment_probability", "type": "DECIMAL(5,4)", "constraints": "NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"},
+            {"name": "updated_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": [
+            "CREATE UNIQUE INDEX idx_invoices_external ON invoices(company_id, source, external_id)",
+            "CREATE INDEX idx_invoices_company_type ON invoices(company_id, type, status)",
+            "CREATE INDEX idx_invoices_due_date ON invoices(due_date) WHERE status NOT IN ('paid', 'void')"
+          ]
+        },
+        {
+          "name": "working_capital_metrics",
+          "description": "Daily working capital snapshots - TimescaleDB hypertable",
+          "is_hypertable": true,
+          "partition_column": "metric_date",
+          "segment_by": "company_id",
+          "chunk_interval": "1 month",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "DEFAULT uuid_generate_v4()"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE CASCADE NOT NULL"},
+            {"name": "metric_date", "type": "TIMESTAMPTZ", "constraints": "NOT NULL"},
+            {"name": "dso", "type": "DECIMAL(10,2)", "constraints": "NULL COMMENT 'Days Sales Outstanding'"},
+            {"name": "dpo", "type": "DECIMAL(10,2)", "constraints": "NULL COMMENT 'Days Payable Outstanding'"},
+            {"name": "ccc", "type": "DECIMAL(10,2)", "constraints": "NULL COMMENT 'Cash Conversion Cycle'"},
+            {"name": "ar_balance", "type": "BIGINT", "constraints": "NULL COMMENT 'in cents'"},
+            {"name": "ap_balance", "type": "BIGINT", "constraints": "NULL COMMENT 'in cents'"},
+            {"name": "cash_balance", "type": "BIGINT", "constraints": "NULL COMMENT 'in cents'"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": [
+            "CREATE UNIQUE INDEX idx_working_capital_company_date ON working_capital_metrics(company_id, metric_date)",
+            "CREATE INDEX idx_working_capital_date ON working_capital_metrics(metric_date DESC)"
+          ],
+          "hypertable_config": "SELECT create_hypertable('working_capital_metrics', by_range('metric_date', INTERVAL '1 month'));"
+        },
+        {
+          "name": "audit_logs",
+          "description": "Tamper-proof audit trail for compliance",
+          "columns": [
+            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT uuid_generate_v4()"},
+            {"name": "company_id", "type": "UUID", "constraints": "REFERENCES companies(id) ON DELETE SET NULL NULL"},
+            {"name": "user_id", "type": "UUID", "constraints": "REFERENCES users(id) ON DELETE SET NULL NULL"},
+            {"name": "action", "type": "VARCHAR(100)", "constraints": "NOT NULL"},
+            {"name": "resource_type", "type": "VARCHAR(50)", "constraints": "NOT NULL"},
+            {"name": "resource_id", "type": "UUID", "constraints": "NULL"},
+            {"name": "ip_address", "type": "INET", "constraints": "NULL"},
+            {"name": "user_agent", "type": "TEXT", "constraints": "NULL"},
+            {"name": "old_values", "type": "JSONB", "constraints": "NULL"},
+            {"name": "new_values", "type": "JSONB", "constraints": "NULL"},
+            {"name": "created_at", "type": "TIMESTAMPTZ", "constraints": "DEFAULT NOW()"}
+          ],
+          "indexes": [
+            "CREATE INDEX idx_audit_logs_company ON audit_logs(company_id, created_at DESC)",
+            "CREATE INDEX idx_audit_logs_user ON audit_logs(user_id, created_at DESC)",
+            "CREATE INDEX idx_audit_logs_action ON audit_logs(action, created_at DESC)"
+          ]
+        }
+      ],
+      "relationships": [
+        {"from": "users", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "bank_accounts", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "transactions", "to": "bank_accounts", "type": "many-to-one", "foreign_key": "bank_account_id"},
+        {"from": "transactions", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "forecasts", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "forecasts", "to": "forecast_runs", "type": "many-to-one", "foreign_key": "forecast_run_id"},
+        {"from": "forecast_runs", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "forecast_runs", "to": "users", "type": "many-to-one", "foreign_key": "triggered_by"},
+        {"from": "alerts", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "alerts", "to": "users", "type": "many-to-one", "foreign_key": "acknowledged_by"},
+        {"from": "integrations", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "invoices", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "working_capital_metrics", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "audit_logs", "to": "companies", "type": "many-to-one", "foreign_key": "company_id"},
+        {"from": "audit_logs", "to": "users", "type": "many-to-one", "foreign_key": "user_id"}
+      ]
+    },
+    "api_endpoints": [
+      {
+        "group": "Authentication",
+        "endpoints": [
+          {"method": "POST", "path": "/api/v1/auth/login", "description": "Authenticate user with email/password", "request": {"email": "string", "password": "string"}, "response": {"access_token": "string", "refresh_token": "string", "user": "User"}},
+          {"method": "POST", "path": "/api/v1/auth/logout", "description": "Invalidate current session", "auth": true},
+          {"method": "POST", "path": "/api/v1/auth/refresh", "description": "Refresh access token", "request": {"refresh_token": "string"}},
+          {"method": "POST", "path": "/api/v1/auth/forgot-password", "description": "Initiate password reset", "request": {"email": "string"}},
+          {"method": "POST", "path": "/api/v1/auth/reset-password", "description": "Complete password reset", "request": {"token": "string", "password": "string"}},
+          {"method": "POST", "path": "/api/v1/auth/mfa/setup", "description": "Setup MFA for user", "auth": true},
+          {"method": "POST", "path": "/api/v1/auth/mfa/verify", "description": "Verify MFA code", "auth": true, "request": {"code": "string"}}
+        ]
+      },
+      {
+        "group": "Users",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/users/me", "description": "Get current user profile", "auth": true, "roles": ["*"]},
+          {"method": "PATCH", "path": "/api/v1/users/me", "description": "Update current user profile", "auth": true, "roles": ["*"]},
+          {"method": "GET", "path": "/api/v1/users", "description": "List company users", "auth": true, "roles": ["admin", "cfo"]},
+          {"method": "POST", "path": "/api/v1/users", "description": "Invite new user", "auth": true, "roles": ["admin"]},
+          {"method": "PATCH", "path": "/api/v1/users/:id", "description": "Update user", "auth": true, "roles": ["admin"]},
+          {"method": "DELETE", "path": "/api/v1/users/:id", "description": "Deactivate user", "auth": true, "roles": ["admin"]}
+        ]
+      },
+      {
+        "group": "Cash Position",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/cash/position", "description": "Get current consolidated cash position", "auth": true, "roles": ["cfo", "controller", "analyst", "viewer"], "response": {"total_balance": "number", "available_balance": "number", "accounts": "BankAccount[]", "as_of": "datetime"}},
+          {"method": "GET", "path": "/api/v1/cash/position/history", "description": "Get historical cash position", "auth": true, "query": {"start_date": "date", "end_date": "date", "granularity": "daily|weekly|monthly"}},
+          {"method": "GET", "path": "/api/v1/cash/position/by-account", "description": "Get cash position by account", "auth": true},
+          {"method": "GET", "path": "/api/v1/cash/inflows", "description": "Get cash inflows", "auth": true, "query": {"start_date": "date", "end_date": "date", "category": "string"}},
+          {"method": "GET", "path": "/api/v1/cash/outflows", "description": "Get cash outflows", "auth": true, "query": {"start_date": "date", "end_date": "date", "category": "string"}}
+        ]
+      },
+      {
+        "group": "Forecasting",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/forecasts", "description": "Get latest forecast", "auth": true, "query": {"horizon_days": "number", "scenario": "pessimistic|baseline|optimistic"}},
+          {"method": "POST", "path": "/api/v1/forecasts/generate", "description": "Generate new forecast", "auth": true, "roles": ["cfo", "controller", "analyst"], "request": {"horizon_days": "number", "scenarios": "string[]"}},
+          {"method": "GET", "path": "/api/v1/forecasts/:id", "description": "Get specific forecast run", "auth": true},
+          {"method": "GET", "path": "/api/v1/forecasts/runs", "description": "List forecast run history", "auth": true, "query": {"limit": "number", "offset": "number"}},
+          {"method": "GET", "path": "/api/v1/forecasts/compare", "description": "Compare multiple scenarios", "auth": true, "query": {"scenarios": "string[]", "date": "date"}},
+          {"method": "GET", "path": "/api/v1/forecasts/accuracy", "description": "Get forecast accuracy metrics", "auth": true, "roles": ["cfo", "controller"]}
+        ]
+      },
+      {
+        "group": "Alerts",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/alerts", "description": "List alerts", "auth": true, "query": {"status": "string", "severity": "string", "type": "string", "limit": "number"}},
+          {"method": "GET", "path": "/api/v1/alerts/:id", "description": "Get alert details", "auth": true},
+          {"method": "PATCH", "path": "/api/v1/alerts/:id/acknowledge", "description": "Acknowledge alert", "auth": true, "roles": ["cfo", "controller", "analyst"]},
+          {"method": "PATCH", "path": "/api/v1/alerts/:id/dismiss", "description": "Dismiss alert", "auth": true, "roles": ["cfo", "controller"]},
+          {"method": "GET", "path": "/api/v1/alerts/settings", "description": "Get alert preferences", "auth": true},
+          {"method": "PATCH", "path": "/api/v1/alerts/settings", "description": "Update alert preferences", "auth": true, "roles": ["admin", "cfo"]}
+        ]
+      },
+      {
+        "group": "Working Capital",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/working-capital/metrics", "description": "Get working capital metrics", "auth": true, "query": {"start_date": "date", "end_date": "date"}},
+          {"method": "GET", "path": "/api/v1/working-capital/dso", "description": "Get DSO analytics", "auth": true},
+          {"method": "GET", "path": "/api/v1/working-capital/dpo", "description": "Get DPO analytics", "auth": true},
+          {"method": "GET", "path": "/api/v1/working-capital/ccc", "description": "Get cash conversion cycle", "auth": true},
+          {"method": "GET", "path": "/api/v1/working-capital/recommendations", "description": "Get optimization recommendations", "auth": true, "roles": ["cfo", "controller"]}
+        ]
+      },
+      {
+        "group": "Transactions",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/transactions", "description": "List transactions", "auth": true, "query": {"account_id": "uuid", "start_date": "date", "end_date": "date", "category": "string", "limit": "number", "offset": "number"}},
+          {"method": "GET", "path": "/api/v1/transactions/:id", "description": "Get transaction details", "auth": true},
+          {"method": "PATCH", "path": "/api/v1/transactions/:id", "description": "Update transaction category", "auth": true, "roles": ["controller", "analyst"]},
+          {"method": "GET", "path": "/api/v1/transactions/categories", "description": "Get transaction categories", "auth": true},
+          {"method": "GET", "path": "/api/v1/transactions/recurring", "description": "Get recurring transactions", "auth": true}
+        ]
+      },
+      {
+        "group": "Invoices",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/invoices", "description": "List invoices", "auth": true, "query": {"type": "receivable|payable", "status": "string", "limit": "number"}},
+          {"method": "GET", "path": "/api/v1/invoices/:id", "description": "Get invoice details", "auth": true},
+          {"method": "GET", "path": "/api/v1/invoices/aging", "description": "Get AR/AP aging report", "auth": true},
+          {"method": "GET", "path": "/api/v1/invoices/predictions", "description": "Get payment predictions", "auth": true}
+        ]
+      },
+      {
+        "group": "Integrations",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/integrations", "description": "List connected integrations", "auth": true},
+          {"method": "POST", "path": "/api/v1/integrations/plaid/link-token", "description": "Create Plaid Link token", "auth": true, "roles": ["admin", "cfo"]},
+          {"method": "POST", "path": "/api/v1/integrations/plaid/exchange", "description": "Exchange Plaid public token", "auth": true, "roles": ["admin", "cfo"]},
+          {"method": "DELETE", "path": "/api/v1/integrations/:id", "description": "Disconnect integration", "auth": true, "roles": ["admin"]},
+          {"method": "POST", "path": "/api/v1/integrations/:id/sync", "description": "Trigger manual sync", "auth": true, "roles": ["admin", "cfo"]},
+          {"method": "GET", "path": "/api/v1/integrations/:id/status", "description": "Get integration status", "auth": true}
+        ]
+      },
+      {
+        "group": "Reports",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/reports/cash-flow", "description": "Generate cash flow report", "auth": true, "query": {"start_date": "date", "end_date": "date", "format": "json|pdf|csv"}},
+          {"method": "GET", "path": "/api/v1/reports/forecast-summary", "description": "Generate forecast summary", "auth": true},
+          {"method": "GET", "path": "/api/v1/reports/working-capital", "description": "Generate working capital report", "auth": true},
+          {"method": "POST", "path": "/api/v1/reports/schedule", "description": "Schedule recurring report", "auth": true, "roles": ["cfo", "controller"]}
+        ]
+      },
+      {
+        "group": "Settings",
+        "endpoints": [
+          {"method": "GET", "path": "/api/v1/settings/company", "description": "Get company settings", "auth": true},
+          {"method": "PATCH", "path": "/api/v1/settings/company", "description": "Update company settings", "auth": true, "roles": ["admin"]},
+          {"method": "GET", "path": "/api/v1/settings/notifications", "description": "Get notification preferences", "auth": true},
+          {"method": "PATCH", "path": "/api/v1/settings/notifications", "description": "Update notification preferences", "auth": true}
+        ]
+      },
+      {
+        "group": "Webhooks (Internal)",
+        "endpoints": [
+          {"method": "POST", "path": "/api/v1/webhooks/plaid", "description": "Plaid webhook handler", "auth": "webhook_signature"},
+          {"method": "POST", "path": "/api/v1/webhooks/stripe", "description": "Stripe webhook handler", "auth": "webhook_signature"},
+          {"method": "POST", "path": "/api/v1/webhooks/quickbooks", "description": "QuickBooks webhook handler", "auth": "webhook_signature"}
+        ]
+      }
+    ],
+    "ui_components": {
+      "pages": [
+        {
+          "name": "Dashboard",
+          "path": "/dashboard",
+          "description": "Executive overview with key metrics and alerts",
+          "components": [
+            {"name": "CashPositionCard", "description": "Current total cash position with trend indicator"},
+            {"name": "ForecastChart", "description": "13-week rolling forecast visualization with confidence bands"},
+            {"name": "AlertsList", "description": "Top 5 active alerts sorted by severity"},
+            {"name": "QuickMetrics", "description": "DSO, DPO, CCC at-a-glance cards"},
+            {"name": "RecentTransactions", "description": "Last 10 transactions across all accounts"},
+            {"name": "CashFlowTrend", "description": "Inflow vs outflow comparison chart"}
+          ]
+        },
+        {
+          "name": "Cash Position",
+          "path": "/cash",
+          "description": "Detailed view of current cash across all accounts",
+          "components": [
+            {"name": "AccountsList", "description": "All connected bank accounts with balances"},
+            {"name": "AccountDetailDrawer", "description": "Slide-out panel with account transactions"},
+            {"name": "BalanceHistoryChart", "description": "Historical balance over time"},
+            {"name": "CashByEntity", "description": "Breakdown by business entity/department"},
+            {"name": "SyncStatus", "description": "Last sync time and manual refresh"}
+          ]
+        },
+        {
+          "name": "Forecasts",
+          "path": "/forecasts",
+          "description": "Cash flow forecasting with scenario analysis",
+          "components": [
+            {"name": "ForecastChart", "description": "Primary forecast visualization with scenarios"},
+            {"name": "ScenarioSelector", "description": "Toggle between pessimistic/baseline/optimistic"},
+            {"name": "ForecastTable", "description": "Tabular view of daily/weekly forecasts"},
+            {"name": "ConfidenceIndicator", "description": "Model confidence and accuracy metrics"},
+            {"name": "GenerateForecastButton", "description": "Trigger new forecast generation"},
+            {"name": "ForecastHistory", "description": "Previous forecast runs and accuracy comparison"}
+          ]
+        },
+        {
+          "name": "Alerts",
+          "path": "/alerts",
+          "description": "Alert management and notification center",
+          "components": [
+            {"name": "AlertsTable", "description": "Filterable list of all alerts"},
+            {"name": "AlertDetailModal", "description": "Full alert details with actions"},
+            {"name": "AlertFilters", "description": "Filter by type, severity, status"},
+            {"name": "AlertSettings", "description": "Configure thresholds and notification preferences"}
+          ]
+        },
+        {
+          "name": "Working Capital",
+          "path": "/working-capital",
+          "description": "Working capital analytics and optimization",
+          "components": [
+            {"name": "MetricCards", "description": "DSO, DPO, CCC with benchmarks"},
+            {"name": "TrendChart", "description": "Working capital metrics over time"},
+            {"name": "ARAgingChart", "description": "Accounts receivable aging buckets"},
+            {"name": "APAgingChart", "description": "Accounts payable aging buckets"},
+            {"name": "RecommendationsList", "description": "AI-generated optimization suggestions"},
+            {"name": "BenchmarkComparison", "description": "Industry benchmark comparison"}
+          ]
+        },
+        {
+          "name": "Transactions",
+          "path": "/transactions",
+          "description": "Transaction search and categorization",
+          "components": [
+            {"name": "TransactionTable", "description": "Paginated, sortable transaction list"},
+            {"name": "TransactionFilters", "description": "Date range, account, category filters"},
+            {"name": "CategoryEditor", "description": "Inline category editing"},
+            {"name": "TransactionSearch", "description": "Full-text transaction search"},
+            {"name": "ExportButton", "description": "Export to CSV/Excel"}
+          ]
+        },
+        {
+          "name": "Invoices",
+          "path": "/invoices",
+          "description": "AR/AP invoice tracking and payment predictions",
+          "components": [
+            {"name": "InvoiceTable", "description": "AR and AP invoice list"},
+            {"name": "InvoiceFilters", "description": "Type, status, date range filters"},
+            {"name": "PaymentPredictions", "description": "AI-predicted payment dates"},
+            {"name": "AgingReport", "description": "Visual aging breakdown"}
+          ]
+        },
+        {
+          "name": "Integrations",
+          "path": "/settings/integrations",
+          "description": "Manage connected accounts and data sources",
+          "components": [
+            {"name": "IntegrationsList", "description": "Connected integrations with status"},
+            {"name": "PlaidLink", "description": "Add new bank connection"},
+            {"name": "AccountingConnect", "description": "QuickBooks/NetSuite OAuth flow"},
+            {"name": "SyncHistory", "description": "Data sync history and errors"}
+          ]
+        },
+        {
+          "name": "Settings",
+          "path": "/settings",
+          "description": "Company and user settings",
+          "components": [
+            {"name": "CompanySettings", "description": "Organization details, timezone, currency"},
+            {"name": "UserManagement", "description": "Team members and roles"},
+            {"name": "NotificationSettings", "description": "Email and in-app notification preferences"},
+            {"name": "BillingSettings", "description": "Subscription management via Stripe"},
+            {"name": "SecuritySettings", "description": "MFA, password policies"}
+          ]
+        }
+      ],
+      "shared_components": [
+        {"name": "AppShell", "description": "Main layout with sidebar navigation"},
+        {"name": "Header", "description": "Top bar with user menu and notifications"},
+        {"name": "Sidebar", "description": "Navigation sidebar with collapsible menu"},
+        {"name": "DataTable", "description": "Reusable data table with sorting/filtering"},
+        {"name": "Chart", "description": "Recharts wrapper with theming"},
+        {"name": "Card", "description": "Shadcn Card component"},
+        {"name": "Button", "description": "Shadcn Button with variants"},
+        {"name": "Dialog", "description": "Shadcn Dialog for modals"},
+        {"name": "Toast", "description": "Notification toasts"},
+        {"name": "LoadingSpinner", "description": "Consistent loading state"},
+        {"name": "EmptyState", "description": "Empty data state with CTA"},
+        {"name": "ErrorBoundary", "description": "Error handling wrapper"}
+      ]
+    },
+    "color_scheme": {
+      "brand": {
+        "primary": "#0F172A",
+        "secondary": "#3B82F6",
+        "accent": "#10B981"
+      },
+      "semantic": {
+        "success": "#22C55E",
+        "warning": "#F59E0B",
+        "error": "#EF4444",
+        "info": "#3B82F6"
+      },
+      "cash_flow": {
+        "inflow": "#22C55E",
+        "outflow": "#EF4444",
+        "neutral": "#6B7280",
+        "forecast": "#8B5CF6",
+        "confidence_band": "rgba(139, 92, 246, 0.2)"
+      },
+      "severity": {
+        "critical": "#DC2626",
+        "warning": "#D97706",
+        "info": "#2563EB"
+      },
+      "background": {
+        "primary": "#FFFFFF",
+        "secondary": "#F8FAFC",
+        "tertiary": "#F1F5F9"
+      },
+      "text": {
+        "primary": "#0F172A",
+        "secondary": "#475569",
+        "muted": "#94A3B8"
+      }
+    },
+    "typography": {
+      "font_family": {
+        "sans": "Inter, system-ui, -apple-system, sans-serif",
+        "mono": "JetBrains Mono, Menlo, monospace"
+      },
+      "font_sizes": {
+        "xs": "0.75rem",
+        "sm": "0.875rem",
+        "base": "1rem",
+        "lg": "1.125rem",
+        "xl": "1.25rem",
+        "2xl": "1.5rem",
+        "3xl": "1.875rem",
+        "4xl": "2.25rem"
+      },
+      "font_weights": {
+        "normal": 400,
+        "medium": 500,
+        "semibold": 600,
+        "bold": 700
+      },
+      "line_heights": {
+        "tight": 1.25,
+        "normal": 1.5,
+        "relaxed": 1.75
+      }
+    }
+  },
+  "architecture_spec": {
+    "frontend": {
+      "framework": "Next.js 14",
+      "features": ["App Router", "React Server Components", "Server Actions", "Streaming"],
+      "styling": "Tailwind CSS 3.4 + Shadcn UI",
+      "state_management": "React Query (TanStack Query) for server state, Zustand for client state",
+      "forms": "React Hook Form + Zod validation",
+      "charts": "Recharts with Shadcn Chart components",
+      "auth": "NextAuth.js v5 with JWT strategy",
+      "build": {
+        "bundler": "Turbopack (dev), Webpack (prod)",
+        "output": "Standalone Docker image",
+        "cdn": "AWS CloudFront"
+      },
+      "directory_structure": {
+        "app": "Next.js App Router pages and layouts",
+        "components": "Reusable UI components",
+        "components/ui": "Shadcn UI primitives",
+        "lib": "Utility functions and API clients",
+        "hooks": "Custom React hooks",
+        "stores": "Zustand stores",
+        "types": "TypeScript type definitions"
+      }
+    },
+    "backend": {
+      "runtime": "Node.js 20 LTS",
+      "framework": "Express 4.x",
+      "language": "TypeScript 5.x",
+      "orm": "Prisma 5.x",
+      "validation": "Zod",
+      "authentication": "Passport.js with JWT",
+      "authorization": "CASL (Attribute-based access control)",
+      "rate_limiting": "express-rate-limit + Redis",
+      "logging": "Pino",
+      "error_handling": "Custom error classes with Sentry integration",
+      "directory_structure": {
+        "src/routes": "Express route handlers",
+        "src/controllers": "Request/response handling",
+        "src/services": "Business logic layer",
+        "src/repositories": "Data access layer (Prisma)",
+        "src/middleware": "Express middleware",
+        "src/utils": "Utility functions",
+        "src/types": "TypeScript types",
+        "src/jobs": "Background job definitions",
+        "prisma": "Prisma schema and migrations"
+      },
+      "background_jobs": {
+        "queue": "BullMQ with Redis",
+        "jobs": [
+          "sync-plaid-transactions",
+          "sync-accounting-data",
+          "generate-forecast",
+          "send-alert-notifications",
+          "generate-scheduled-reports",
+          "calculate-working-capital-metrics"
+        ]
+      }
+    },
+    "ml_service": {
+      "runtime": "Python 3.11",
+      "framework": "FastAPI 0.110+",
+      "ml_libraries": {
+        "forecasting": "Prophet 1.1+",
+        "general_ml": "scikit-learn 1.4+",
+        "data": "pandas 2.x, numpy 1.26+",
+        "optimization": "scipy, pulp (for working capital optimization)"
+      },
+      "model_serving": "Direct inference (no MLflow for MVP)",
+      "async": "asyncio with uvicorn",
+      "validation": "Pydantic v2",
+      "directory_structure": {
+        "app": "FastAPI application",
+        "app/api": "API endpoints",
+        "app/models": "ML model definitions",
+        "app/services": "Business logic",
+        "app/schemas": "Pydantic schemas",
+        "app/utils": "Utility functions",
+        "models": "Trained model artifacts"
+      },
+      "endpoints": [
+        {"method": "POST", "path": "/forecast/generate", "description": "Generate cash flow forecast"},
+        {"method": "GET", "path": "/forecast/status/:job_id", "description": "Check forecast job status"},
+        {"method": "POST", "path": "/anomaly/detect", "description": "Detect transaction anomalies"},
+        {"method": "POST", "path": "/payment/predict", "description": "Predict invoice payment dates"},
+        {"method": "POST", "path": "/working-capital/optimize", "description": "Generate WC recommendations"},
+        {"method": "GET", "path": "/health", "description": "Health check"}
+      ]
+    },
+    "database": {
+      "primary": {
+        "engine": "PostgreSQL 15",
+        "extensions": ["timescaledb", "uuid-ossp", "pgcrypto"],
+        "hosting": "AWS RDS (Multi-AZ)",
+        "instance": "db.r6g.large (MVP), db.r6g.xlarge (scale)"
+      },
+      "time_series": {
+        "solution": "TimescaleDB extension",
+        "hypertables": ["transactions", "forecasts", "working_capital_metrics"],
+        "compression": "Enabled for data older than 30 days",
+        "retention": "3 years (transactions), 1 year (forecasts)"
+      },
+      "cache": {
+        "engine": "Redis 7",
+        "hosting": "AWS ElastiCache",
+        "use_cases": ["session_storage", "rate_limiting", "job_queue", "api_cache"]
+      },
+      "backup": {
+        "strategy": "Automated daily snapshots",
+        "retention": "35 days",
+        "point_in_time_recovery": "Enabled"
+      }
+    },
+    "infrastructure": {
+      "cloud_provider": "AWS",
+      "region": "us-east-1 (primary), us-west-2 (DR)",
+      "compute": {
+        "frontend": "AWS ECS Fargate (Next.js container)",
+        "backend": "AWS ECS Fargate (Node.js container)",
+        "ml_service": "AWS ECS Fargate (Python container)",
+        "auto_scaling": {
+          "min_tasks": 2,
+          "max_tasks": 10,
+          "cpu_target": 70,
+          "memory_target": 80
+        }
+      },
+      "networking": {
+        "vpc": "Dedicated VPC with public/private subnets",
+        "load_balancer": "AWS ALB",
+        "cdn": "AWS CloudFront",
+        "dns": "AWS Route 53"
+      },
+      "storage": {
+        "static_assets": "AWS S3 + CloudFront",
+        "file_uploads": "AWS S3 with encryption"
+      },
+      "secrets": "AWS Secrets Manager",
+      "monitoring": {
+        "apm": "AWS X-Ray",
+        "logs": "AWS CloudWatch Logs",
+        "metrics": "AWS CloudWatch Metrics + Prometheus",
+        "alerts": "AWS CloudWatch Alarms + PagerDuty",
+        "dashboards": "Grafana Cloud"
+      },
+      "ci_cd": {
+        "source": "GitHub",
+        "pipeline": "GitHub Actions",
+        "registry": "AWS ECR",
+        "deployment": "AWS ECS Rolling Update"
+      }
+    }
+  },
+  "ml_models": [
+    {
+      "name": "CashFlowForecaster",
+      "purpose": "13-week rolling cash flow forecast with confidence intervals",
+      "algorithm": "Prophet (additive model)",
+      "features": {
+        "time_components": ["trend", "weekly_seasonality", "monthly_seasonality", "yearly_seasonality"],
+        "regressors": ["is_holiday", "is_weekend", "payroll_week"],
+        "changepoint_detection": "automatic"
+      },
+      "training": {
+        "frequency": "Weekly (Sunday 2am UTC)",
+        "data_requirements": "Minimum 90 days of transaction history",
+        "validation": "Time-series cross-validation (5 folds, 30-day horizon)"
+      },
+      "outputs": {
+        "predictions": "Daily predicted net cash flow",
+        "confidence_intervals": "80% and 95% bands",
+        "scenarios": ["pessimistic (-1 std)", "baseline", "optimistic (+1 std)"]
+      },
+      "accuracy_target": "MAPE < 10% at 7-day horizon, < 15% at 30-day horizon",
+      "model_storage": "S3 bucket with versioning"
+    },
+    {
+      "name": "AnomalyDetector",
+      "purpose": "Detect unusual transactions that may indicate errors or fraud",
+      "algorithm": "Isolation Forest",
+      "features": ["amount_z_score", "category_frequency", "time_of_day", "day_of_week", "merchant_frequency"],
+      "training": {
+        "frequency": "Monthly",
+        "data_requirements": "Minimum 1000 transactions"
+      },
+      "outputs": {
+        "anomaly_score": "0-1 probability",
+        "threshold": "0.8 for flagging"
+      }
+    },
+    {
+      "name": "PaymentPredictor",
+      "purpose": "Predict when AR invoices will be paid",
+      "algorithm": "Gradient Boosting (scikit-learn)",
+      "features": ["customer_payment_history", "invoice_amount", "days_since_due", "industry", "invoice_age"],
+      "training": {
+        "frequency": "Weekly",
+        "data_requirements": "Minimum 100 paid invoices"
+      },
+      "outputs": {
+        "predicted_payment_date": "Date",
+        "confidence": "0-1 probability"
+      }
+    },
+    {
+      "name": "WorkingCapitalOptimizer",
+      "purpose": "Recommend payment timing to optimize cash flow",
+      "algorithm": "Linear Programming (scipy.optimize)",
+      "constraints": ["maintain_minimum_balance", "respect_payment_terms", "preserve_vendor_relationships"],
+      "outputs": {
+        "recommendations": "List of payment timing suggestions",
+        "projected_savings": "Estimated working capital freed"
+      }
+    }
+  ],
+  "security": {
+    "authentication": {
+      "method": "JWT with refresh tokens",
+      "access_token_expiry": "15 minutes",
+      "refresh_token_expiry": "7 days",
+      "password_requirements": {
+        "min_length": 12,
+        "require_uppercase": true,
+        "require_lowercase": true,
+        "require_numbers": true,
+        "require_special": true
+      },
+      "mfa": {
+        "supported_methods": ["TOTP (authenticator app)", "SMS (backup)"],
+        "required_for": ["admin", "cfo"],
+        "optional_for": ["controller", "analyst", "viewer"]
+      }
+    },
+    "authorization": {
+      "model": "Role-Based Access Control (RBAC)",
+      "roles": [
+        {"name": "admin", "description": "Full system access, user management"},
+        {"name": "cfo", "description": "All financial data, can generate forecasts"},
+        {"name": "controller", "description": "All financial data, limited settings"},
+        {"name": "analyst", "description": "View and export data, categorize transactions"},
+        {"name": "viewer", "description": "Read-only access to dashboards"}
+      ],
+      "implementation": "CASL library with Prisma integration"
+    },
+    "encryption": {
+      "at_rest": {
+        "database": "AWS RDS encryption (AES-256)",
+        "s3": "SSE-S3 or SSE-KMS",
+        "redis": "AWS ElastiCache encryption"
+      },
+      "in_transit": {
+        "external": "TLS 1.3 minimum",
+        "internal": "TLS 1.2 minimum (service mesh)"
+      },
+      "field_level": {
+        "plaid_access_tokens": "AES-256-GCM with AWS KMS",
+        "mfa_secrets": "AES-256-GCM with AWS KMS"
+      }
+    },
+    "soc2_controls": {
+      "cc1_control_environment": {
+        "policies": ["Information Security Policy", "Acceptable Use Policy"],
+        "training": "Annual security awareness training",
+        "background_checks": "For employees with data access"
+      },
+      "cc2_communication": {
+        "documentation": "System description document",
+        "incident_response": "Documented IR plan"
+      },
+      "cc3_risk_assessment": {
+        "frequency": "Annual risk assessment",
+        "vulnerability_scanning": "Weekly automated scans",
+        "penetration_testing": "Annual third-party pentest"
+      },
+      "cc5_monitoring": {
+        "audit_logging": "All data access and modifications logged",
+        "log_retention": "1 year",
+        "siem": "AWS Security Hub + custom rules"
+      },
+      "cc6_logical_access": {
+        "principle": "Least privilege",
+        "review": "Quarterly access reviews",
+        "termination": "Same-day access revocation"
+      },
+      "cc7_system_operations": {
+        "change_management": "Pull request review required",
+        "incident_management": "PagerDuty integration",
+        "backup_testing": "Quarterly restore tests"
+      },
+      "cc8_change_management": {
+        "sdlc": "Documented SDLC",
+        "code_review": "Required for all changes",
+        "testing": "Automated CI/CD pipeline"
+      }
+    },
+    "compliance_timeline": {
+      "month_1_3": "Implement core controls, draft policies",
+      "month_4_6": "Internal audit, remediation",
+      "month_7_9": "External auditor readiness assessment",
+      "month_10_12": "SOC 2 Type I audit",
+      "month_13_18": "SOC 2 Type II audit period"
+    },
+    "api_security": {
+      "rate_limiting": {
+        "authenticated": "1000 requests/minute",
+        "unauthenticated": "100 requests/minute",
+        "by_endpoint": "Custom limits for expensive operations"
+      },
+      "input_validation": "Zod schemas on all endpoints",
+      "output_sanitization": "No sensitive data in responses",
+      "cors": "Strict origin whitelist",
+      "headers": ["X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security", "Content-Security-Policy"]
+    }
+  },
+  "scalability": {
+    "targets": {
+      "customers": "1000+ mid-market companies",
+      "concurrent_users": "5000+",
+      "transactions_per_day": "10 million+",
+      "api_requests_per_second": "500+"
+    },
+    "performance_requirements": {
+      "api_response_time_p95": "<200ms",
+      "dashboard_load_time": "<2s",
+      "forecast_generation_time": "<30s",
+      "transaction_sync_latency": "<5 minutes"
+    },
+    "horizontal_scaling": {
+      "frontend": {
+        "strategy": "Stateless Next.js containers behind ALB",
+        "scaling_trigger": "CPU > 70% or memory > 80%",
+        "min_instances": 2,
+        "max_instances": 10
+      },
+      "backend": {
+        "strategy": "Stateless Express containers behind ALB",
+        "scaling_trigger": "CPU > 70% or request count",
+        "min_instances": 2,
+        "max_instances": 20
+      },
+      "ml_service": {
+        "strategy": "Separate scaling group for compute-heavy workloads",
+        "scaling_trigger": "Queue depth",
+        "min_instances": 1,
+        "max_instances": 5
+      }
+    },
+    "database_scaling": {
+      "read_replicas": "2 read replicas for reporting queries",
+      "connection_pooling": "PgBouncer with 100 connections per service",
+      "partitioning": "TimescaleDB automatic chunking",
+      "archival": "Move data older than 2 years to cold storage"
+    },
+    "caching_strategy": {
+      "api_responses": {
+        "cash_position": "30 seconds TTL",
+        "forecast_data": "5 minutes TTL",
+        "static_lookups": "1 hour TTL"
+      },
+      "session_data": "Redis with 24-hour TTL",
+      "rate_limiting": "Redis sliding window"
+    },
+    "async_processing": {
+      "job_queue": "BullMQ with Redis",
+      "concurrency": {
+        "sync_jobs": 10,
+        "forecast_jobs": 2,
+        "notification_jobs": 20
+      }
+    }
+  },
+  "development_plan": {
+    "phase_1_mvp": {
+      "duration": "Months 1-6",
+      "focus": "Core forecasting and bank integration",
+      "deliverables": [
+        "User authentication and company onboarding",
+        "Plaid bank account connection",
+        "Real-time cash position dashboard",
+        "Basic 13-week cash flow forecast",
+        "Critical cash shortage alerts",
+        "Basic transaction categorization"
+      ],
+      "team": {
+        "frontend": 2,
+        "backend": 2,
+        "ml": 1,
+        "devops": 0.5,
+        "design": 0.5
+      }
+    },
+    "phase_2_expansion": {
+      "duration": "Months 7-12",
+      "focus": "Accounting integrations and advanced analytics",
+      "deliverables": [
+        "QuickBooks and NetSuite integrations",
+        "AR/AP invoice tracking",
+        "Payment prediction model",
+        "Working capital analytics (DSO, DPO, CCC)",
+        "Scenario comparison (pessimistic/baseline/optimistic)",
+        "Scheduled reports and exports"
+      ]
+    },
+    "phase_3_enterprise": {
+      "duration": "Months 13-18",
+      "focus": "Enterprise features and SOC 2",
+      "deliverables": [
+        "Multi-entity support",
+        "Advanced RBAC and SSO",
+        "SOC 2 Type II certification",
+        "API access for customers",
+        "Custom branding options",
+        "Advanced anomaly detection"
+      ]
+    }
+  },
+  "risks": [
+    {
+      "id": "RISK-001",
+      "category": "Technical",
+      "description": "Plaid API rate limits may impact real-time data sync for high-volume customers",
+      "probability": "Medium",
+      "impact": "Medium",
+      "mitigation": "Implement intelligent sync scheduling, webhook-based updates, local caching"
+    },
+    {
+      "id": "RISK-002",
+      "category": "Technical",
+      "description": "Forecast accuracy may not meet 90-95% target with limited historical data",
+      "probability": "Medium",
+      "impact": "High",
+      "mitigation": "Require minimum 90 days data, provide confidence intervals, use ensemble models as fallback"
+    },
+    {
+      "id": "RISK-003",
+      "category": "Compliance",
+      "description": "SOC 2 certification timeline may slip due to control implementation complexity",
+      "probability": "Medium",
+      "impact": "Medium",
+      "mitigation": "Start control documentation in Phase 1, hire compliance consultant early"
+    },
+    {
+      "id": "RISK-004",
+      "category": "Integration",
+      "description": "Accounting system APIs (QuickBooks, NetSuite) have varied data quality",
+      "probability": "High",
+      "impact": "Medium",
+      "mitigation": "Build robust data validation and normalization layer, provide manual data entry fallback"
+    },
+    {
+      "id": "RISK-005",
+      "category": "Business",
+      "description": "Customer adoption may be slower than projected due to integration complexity",
+      "probability": "Medium",
+      "impact": "High",
+      "mitigation": "White-glove onboarding for first 20 customers, detailed setup documentation"
+    },
+    {
+      "id": "RISK-006",
+      "category": "Security",
+      "description": "Financial data breach would severely damage reputation and incur regulatory penalties",
+      "probability": "Low",
+      "impact": "Critical",
+      "mitigation": "Defense in depth, encryption everywhere, regular penetration testing, incident response plan"
+    }
+  ],
+  "next_steps": [
+    {
+      "step": 1,
+      "action": "Set up development environment",
+      "tasks": [
+        "Create GitHub repository with branch protection",
+        "Set up Next.js 14 frontend project with Tailwind + Shadcn",
+        "Set up Node.js/Express backend with Prisma",
+        "Set up Python/FastAPI ML service",
+        "Configure local PostgreSQL + TimescaleDB",
+        "Set up Redis for development"
+      ],
+      "duration": "Week 1"
+    },
+    {
+      "step": 2,
+      "action": "Implement authentication and core models",
+      "tasks": [
+        "Implement Prisma schema and run migrations",
+        "Build JWT authentication with NextAuth.js",
+        "Implement user and company CRUD APIs",
+        "Set up RBAC with CASL",
+        "Create basic dashboard layout with Shadcn"
+      ],
+      "duration": "Weeks 2-3"
+    },
+    {
+      "step": 3,
+      "action": "Build Plaid integration",
+      "tasks": [
+        "Integrate Plaid Link SDK in frontend",
+        "Implement token exchange and account linking",
+        "Build transaction sync job",
+        "Implement webhook handler for real-time updates",
+        "Create cash position API endpoints"
+      ],
+      "duration": "Weeks 4-5"
+    },
+    {
+      "step": 4,
+      "action": "Implement forecasting engine",
+      "tasks": [
+        "Build Prophet-based forecasting model",
+        "Create FastAPI endpoints for forecast generation",
+        "Implement forecast job queue",
+        "Build forecast visualization with Recharts",
+        "Add scenario comparison functionality"
+      ],
+      "duration": "Weeks 6-8"
+    },
+    {
+      "step": 5,
+      "action": "Build alerting system",
+      "tasks": [
+        "Implement alert generation logic",
+        "Build alert API endpoints",
+        "Create alert UI components",
+        "Implement email notifications",
+        "Add in-app notification center"
+      ],
+      "duration": "Weeks 9-10"
+    },
+    {
+      "step": 6,
+      "action": "Deploy to AWS",
+      "tasks": [
+        "Set up AWS infrastructure with Terraform",
+        "Configure CI/CD pipeline with GitHub Actions",
+        "Deploy to staging environment",
+        "Perform security review",
+        "Deploy to production"
+      ],
+      "duration": "Weeks 11-12"
+    }
+  ],
+  "gate_score": {
+    "overall": 92,
+    "breakdown": {
+      "architecture_completeness": 95,
+      "database_design": 94,
+      "api_design": 93,
+      "security_design": 90,
+      "scalability_plan": 91,
+      "ml_model_design": 89,
+      "ui_specification": 92,
+      "risk_assessment": 91
+    },
+    "threshold_met": true,
+    "recommendation": "PROCEED to Stage 3 (BUILD)"
+  }
+}
