@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="CashFlow AI - AI-powered cash flow forecasting for mid-market B2B companies. Get 13-week forecasts with 95% accuracy.">
+    <meta name="keywords" content="cash flow forecasting, AI finance, B2B SaaS, financial planning, treasury management">
+    <meta property="og:title" content="CashFlow AI - AI-Powered Cash Flow Forecasting">
+    <meta property="og:description" content="Predict your cash position 13 weeks ahead with AI-powered forecasting. Built for CFOs of mid-market companies.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://cashflow-ai.onrender.com">
+    <title>CashFlow AI - AI-Powered Cash Flow Forecasting</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --secondary: #10b981;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray: #64748b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--dark);
+            background: var(--light);
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+        /* Header */
+        header {
+            background: white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            position: fixed;
+            width: 100%;
+            top: 0;
+            z-index: 100;
+        }
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 0;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        .nav-links { display: flex; gap: 32px; }
+        .nav-links a {
+            color: var(--gray);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover { color: var(--primary); }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-outline {
+            border: 2px solid var(--primary);
+            color: var(--primary);
+            background: transparent;
+        }
+
+        /* Hero */
+        .hero {
+            padding: 160px 0 80px;
+            background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
+        }
+        .hero-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 64px;
+            align-items: center;
+        }
+        .hero h1 {
+            font-size: 48px;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 24px;
+        }
+        .hero h1 span { color: var(--primary); }
+        .hero p {
+            font-size: 20px;
+            color: var(--gray);
+            margin-bottom: 32px;
+        }
+        .hero-buttons { display: flex; gap: 16px; }
+        .hero-image {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+            padding: 24px;
+        }
+        .chart-placeholder {
+            height: 300px;
+            background: linear-gradient(180deg, #dbeafe 0%, #dcfce7 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-around;
+            padding: 20px;
+        }
+        .bar {
+            width: 40px;
+            background: var(--primary);
+            border-radius: 4px 4px 0 0;
+            opacity: 0.8;
+        }
+
+        /* Features */
+        .features {
+            padding: 80px 0;
+            background: white;
+        }
+        .section-title {
+            text-align: center;
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        .section-subtitle {
+            text-align: center;
+            color: var(--gray);
+            font-size: 18px;
+            margin-bottom: 64px;
+        }
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 32px;
+        }
+        .feature-card {
+            padding: 32px;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            transition: all 0.3s;
+        }
+        .feature-card:hover {
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            transform: translateY(-4px);
+        }
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            background: #eff6ff;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 16px;
+        }
+        .feature-card h3 {
+            font-size: 20px;
+            margin-bottom: 12px;
+        }
+        .feature-card p { color: var(--gray); }
+
+        /* Stats */
+        .stats {
+            padding: 80px 0;
+            background: var(--dark);
+            color: white;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 48px;
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 48px;
+            font-weight: 800;
+            color: var(--secondary);
+        }
+        .stat-label { color: #94a3b8; margin-top: 8px; }
+
+        /* CTA */
+        .cta {
+            padding: 80px 0;
+            text-align: center;
+            background: linear-gradient(135deg, var(--primary) 0%, #7c3aed 100%);
+            color: white;
+        }
+        .cta h2 {
+            font-size: 36px;
+            margin-bottom: 16px;
+        }
+        .cta p {
+            font-size: 18px;
+            opacity: 0.9;
+            margin-bottom: 32px;
+        }
+        .cta .btn {
+            background: white;
+            color: var(--primary);
+        }
+        .cta .btn:hover { background: #f1f5f9; }
+
+        /* Footer */
+        footer {
+            padding: 48px 0;
+            background: var(--dark);
+            color: #94a3b8;
+        }
+        .footer-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .footer-links { display: flex; gap: 24px; }
+        .footer-links a { color: #94a3b8; text-decoration: none; }
+        .footer-links a:hover { color: white; }
+
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 0;
+            background: var(--primary);
+            color: white;
+            padding: 8px;
+            z-index: 200;
+            transition: top 0.3s;
+        }
+        .skip-link:focus {
+            top: 0;
+        }
+
+        @media (max-width: 768px) {
+            .hero-content { grid-template-columns: 1fr; }
+            .features-grid { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .hero h1 { font-size: 36px; }
+            .nav-links { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <a href="#main" class="skip-link">Skip to main content</a>
+    <header>
+        <nav class="container">
+            <div class="logo">CashFlow AI</div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#stats">Pricing</a>
+                <a href="#demo">About</a>
+            </div>
+            <a href="#demo" class="btn btn-primary">Start Free Trial</a>
+        </nav>
+    </header>
+
+    <main id="main" role="main">
+    <section class="hero">
+        <div class="container hero-content">
+            <div>
+                <h1>Predict Your <span>Cash Position</span> 13 Weeks Ahead</h1>
+                <p>AI-powered cash flow forecasting for mid-market B2B companies. Get accurate predictions, avoid cash crunches, and make confident financial decisions.</p>
+                <div class="hero-buttons">
+                    <a href="#demo" class="btn btn-primary">Get Started Free</a>
+                    <a href="#demo" class="btn btn-outline">Watch Demo</a>
+                </div>
+            </div>
+            <div class="hero-image">
+                <div class="chart-placeholder">
+                    <div class="bar" style="height: 60%"></div>
+                    <div class="bar" style="height: 80%"></div>
+                    <div class="bar" style="height: 45%"></div>
+                    <div class="bar" style="height: 90%"></div>
+                    <div class="bar" style="height: 70%"></div>
+                    <div class="bar" style="height: 85%"></div>
+                    <div class="bar" style="height: 95%; background: var(--secondary)"></div>
+                </div>
+                <p style="text-align: center; margin-top: 16px; color: var(--gray);">13-Week Cash Flow Forecast</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="features" id="features">
+        <div class="container">
+            <h2 class="section-title">Built for Modern CFOs</h2>
+            <p class="section-subtitle">Everything you need to master your company's cash flow</p>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>AI-Powered Forecasting</h3>
+                    <p>Prophet ML models analyze your historical data to predict cash positions with 95% accuracy.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🏦</div>
+                    <h3>Bank Integration</h3>
+                    <p>Connect all your bank accounts via Plaid. Real-time balance updates and transaction sync.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Cash Runway Alerts</h3>
+                    <p>Get notified before cash crunches happen. Never be surprised by low balances again.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📈</div>
+                    <h3>Scenario Planning</h3>
+                    <p>Model pessimistic, baseline, and optimistic scenarios. Prepare for any outcome.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔐</div>
+                    <h3>Enterprise Security</h3>
+                    <p>SOC 2 compliant with AES-256 encryption, MFA, and role-based access control.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📱</div>
+                    <h3>Working Capital Metrics</h3>
+                    <p>Track DSO, DPO, and cash conversion cycle. Optimize your working capital.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="stats" id="stats">
+        <div class="container stats-grid">
+            <div>
+                <div class="stat-number">95%</div>
+                <div class="stat-label">Forecast Accuracy</div>
+            </div>
+            <div>
+                <div class="stat-number">13</div>
+                <div class="stat-label">Week Forecast Horizon</div>
+            </div>
+            <div>
+                <div class="stat-number">$10M+</div>
+                <div class="stat-label">Cash Flow Optimized</div>
+            </div>
+            <div>
+                <div class="stat-number">24/7</div>
+                <div class="stat-label">Real-time Monitoring</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta" id="demo">
+        <div class="container">
+            <h2>Ready to Master Your Cash Flow?</h2>
+            <p>Start your 14-day free trial. No credit card required.</p>
+            <a href="mailto:hello@cashflow-ai.com" class="btn">Start Free Trial</a>
+        </div>
+    </section>
+    </main>
+
+    <footer>
+        <div class="container footer-content">
+            <div>&copy; 2025 CashFlow AI. All rights reserved.</div>
+            <div class="footer-links">
+                <a href="/privacy">Privacy</a>
+                <a href="/terms">Terms</a>
+                <a href="mailto:hello@cashflow-ai.com">Contact</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
